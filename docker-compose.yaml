@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: todo_app
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fotima}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-someonehelpme}
+      POSTGRES_DB: ${POSTGRES_DB:-todo_app}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fotima} -d ${POSTGRES_DB:-todo_app}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+
+
+

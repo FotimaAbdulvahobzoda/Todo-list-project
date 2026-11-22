@@ -1,0 +1,618 @@
+openapi: 3.0.3
+info:
+  title: todo_app
+  version: 1.0.0
+  description: |
+    To-do list: registration, login, tasks, assigning tasks to other users.
+
+    Authentication is JWT: after `/auth/login` send the `access_token`
+    in the header `Authorization: Bearer <token>`.
+
+    Who may do what with a task:
+    - the **owner** (creator) can view, edit, assign, mark done and delete it;
+    - the **assignee** can view it and mark it done / not done (but not edit or delete it);
+    - anybody else gets `404`, as if the task did not exist.
+servers:
+  - url: http://localhost:8080/api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: Registration and login
+  - name: users
+    description: Users. Requires a Bearer token.
+  - name: tasks
+    description: Tasks. Requires a Bearer token.
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register a user
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              first_name: Alice
+              last_name: Smith
+              email: alice@mail.com
+              password: secret123
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Invalid body, empty fields or unsuitable password length
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidBody:
+                  value: { error: invalid request body }
+                invalidInput:
+                  value: { error: invalid input }
+                passwordTooShort:
+                  value: { error: password must be at least 8 characters }
+                passwordTooLong:
+                  value: { error: password must be at most 72 bytes }
+        '409':
+          description: Email is already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: { error: email already exists }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Log in
+      description: |
+        Returns a pair of JWTs signed with HS256:
+        - `access_token` goes into `Authorization: Bearer <token>`, lives `ACCESS_TOKEN_TTL` (default 15 minutes);
+        - `refresh_token` lives `REFRESH_TOKEN_TTL` (default 30 days). It is not accepted instead of an access token.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              email: alice@mail.com
+              password: secret123
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: { error: invalid request body }
+        '401':
+          description: Wrong email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: { error: invalid email or password }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me:
+    get:
+      tags: [users]
+      summary: Current user
+      operationId: getMe
+      responses:
+        '200':
+          description: Profile of the user the token belongs to
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: { error: user not found }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users:
+    get:
+      tags: [users]
+      summary: List all users
+      description: Use it to find the `id` for `assignee_id`.
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tasks:
+    post:
+      tags: [tasks]
+      summary: Create a task
+      description: |
+        The owner is the user from the access token.
+        Spaces around `title` and `description` are trimmed; an empty description is stored as `null`.
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              title: Prepare the final project
+              description: Layered architecture, JWT, PostgreSQL
+              priority: 3
+              deadline: '2026-12-31T18:00:00+05:00'
+              assignee_id: 2
+            schema:
+              $ref: '#/components/schemas/TaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/InvalidTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [tasks]
+      summary: List my tasks
+      description: |
+        Returns the tasks I created and the tasks assigned to me.
+        Unfinished tasks come first, then by nearest deadline (tasks without a deadline last).
+      operationId: listTasks
+      parameters:
+        - name: role
+          in: query
+          required: false
+          description: Only tasks I created (`owner`) or only tasks assigned to me (`assignee`).
+          schema:
+            type: string
+            enum: [owner, assignee]
+        - name: completed
+          in: query
+          required: false
+          description: Only done (`true`) or only unfinished (`false`) tasks.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Tasks (an empty array if there are none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid `role` or `completed`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidRole:
+                  value: { error: invalid role }
+                invalidCompleted:
+                  value: { error: completed must be true or false }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [tasks]
+      summary: Get a task
+      description: Owner and assignee only.
+      operationId: getTask
+      responses:
+        '200':
+          description: The task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [tasks]
+      summary: Update a task (owner only)
+      description: |
+        Replaces **all** editable fields. A field you leave out is reset:
+        `priority` becomes 2, `description`, `deadline` and `assignee_id` become `null`.
+        Send `assignee_id` to (re)assign the task; send `null` or omit it to un-assign.
+        The status is changed with `PATCH /tasks/{id}/completed`.
+      operationId: updateTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              title: Prepare the final project (updated)
+              description: Now with tests
+              priority: 2
+              deadline: '2026-12-30T12:00:00Z'
+              assignee_id: 2
+            schema:
+              $ref: '#/components/schemas/TaskRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/InvalidTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [tasks]
+      summary: Delete a task (owner only)
+      operationId: deleteTask
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tasks/{id}/completed:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    patch:
+      tags: [tasks]
+      summary: Mark a task done / not done (owner or assignee)
+      operationId: setTaskCompleted
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              completed: true
+            schema:
+              $ref: '#/components/schemas/CompletedRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid task id or request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidId:
+                  value: { error: invalid id }
+                invalidBody:
+                  value: { error: invalid request body }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+
+  responses:
+    Unauthorized:
+      description: Token is missing, invalid, expired, or it is a refresh token instead of an access token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missingToken:
+              value: { error: missing bearer token }
+            invalidToken:
+              value: { error: invalid token }
+
+    Forbidden:
+      description: The task is visible to you (you are its assignee), but only the owner may do this
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: forbidden }
+
+    TaskNotFound:
+      description: No such task, or it belongs to somebody else
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: task not found }
+
+    InvalidTaskId:
+      description: The id in the URL is not a positive number
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: invalid id }
+
+    InvalidTask:
+      description: Invalid task id, request body or field values
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidId:
+              value: { error: invalid id }
+            invalidBody:
+              value: { error: invalid request body }
+            invalidTitle:
+              value: { error: 'title is required and must be at most 100 characters.' }
+            invalidDescription:
+              value: { error: description must be at most 1000 characters }
+            invalidPriority:
+              value: { error: invalid priority }
+            assigneeNotFound:
+              value: { error: assignee not found }
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: internal server error }
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [first_name, last_name, email, password]
+      properties:
+        first_name:
+          type: string
+          example: Alice
+        last_name:
+          type: string
+          example: Smith
+        email:
+          type: string
+          format: email
+          description: Spaces are trimmed and the address is lower-cased.
+          example: alice@mail.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: At least 8 characters and at most 72 bytes (bcrypt limit).
+          example: secret123
+
+    RegisterResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: alice@mail.com
+        password:
+          type: string
+          format: password
+          example: secret123
+
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token:
+          type: string
+          description: JWT to send in the `Authorization` header. Lives `ACCESS_TOKEN_TTL` (15 minutes by default).
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Longer-lived JWT (`REFRESH_TOKEN_TTL`, 30 days by default). It is not accepted instead of an access token.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    User:
+      type: object
+      required: [id, email, first_name, last_name, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        email:
+          type: string
+          format: email
+          example: alice@mail.com
+        first_name:
+          type: string
+          example: Alice
+        last_name:
+          type: string
+          example: Smith
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-11T09:00:00Z'
+
+    TaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 1 to 100 characters after trimming spaces.
+          example: Prepare the final project
+        description:
+          type: string
+          nullable: true
+          maxLength: 1000
+          example: Layered architecture, JWT, PostgreSQL
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 2
+          description: 1 = low, 2 = medium, 3 = high.
+          example: 3
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: Date and time with a time zone (RFC 3339).
+          example: '2026-12-31T18:00:00+05:00'
+        assignee_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Id of the user who has to do the task. The assignee can see it and mark it done.
+          example: 2
+
+    CompletedRequest:
+      type: object
+      required: [completed]
+      properties:
+        completed:
+          type: boolean
+          example: true
+
+    Task:
+      type: object
+      required: [id, title, completed, priority, owner_id, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        title:
+          type: string
+          example: Prepare the final project
+        description:
+          type: string
+          nullable: true
+          example: Layered architecture, JWT, PostgreSQL
+        completed:
+          type: boolean
+          example: false
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 3
+          example: 3
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-12-31T13:00:00Z'
+        owner_id:
+          type: integer
+          format: int64
+          example: 1
+        assignee_id:
+          type: integer
+          format: int64
+          nullable: true
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-11-11T09:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-11-11T09:00:00Z'
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

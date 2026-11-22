@@ -4,30 +4,48 @@ import (
 	"time"
 )
 
+const (
+	PriorityLow     = 1
+	PriorityMedium  = 2 //default
+	PriorityHigh    = 3
+	PriorityDefault = PriorityMedium
+)
+
+const (
+	TaskRoleOwner    = "owner"
+	TaskRoleAssignee = "assignee"
+)
+
 type Task struct {
-	ID          int64      `json:"id"`
-	Title       string     `json:"title"`
-	Description *string    `json:"description"`
-	Completed   bool       `json:"completed"`
-	Priority    int        `json:"priority"`
-	Deadline    *time.Time `json:"deadline"`
-	OwnerID     int64      `json:"owner_id"`
-	AssigneeID  *int64     `json:"assignee_id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          int64
+	Title       string
+	Description *string
+	Completed   bool
+	Priority    int
+	Deadline    *time.Time
+	OwnerID     int64
+	AssigneeID  *int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type CreateTaskInput struct {
-	Title       string     `json:"title"`
-	Description *string    `json:"description"`
-	Priority    int        `json:"priority"`
-	Deadline    *time.Time `json:"deadline"`
-	AssigneeID  int64
+	Title       string
+	Description *string
+	Priority    *int
+	Deadline    *time.Time
+	AssigneeID  *int64
 }
 
 type UpdateTaskInput struct {
-	Title       string     `json:"title"`
-	Description *string    `json:"description"`
-	Priority    int        `json:"priority"`
-	Deadline    *time.Time `json:"deadline"`
+	Title       string
+	Description *string
+	Priority    int
+	Deadline    *time.Time
+}
+
+type TaskFilter struct {
+	UserID    int64
+	Role      string
+	Completed *bool
 }
